@@ -79,37 +79,8 @@ De användarnamn, lösenord, tokens och identiteter som du samlat ihop i
 från EasyCashier och Bokio kan du spara i en fil för att slippa ange dem
 varje gång. Se till att bara behöriga har tillgång till filen.
 
-#### Exempel på Windows
+Se [zrappimp.cmd](examples/zrappimp.cmd) för Windows och
+[zrappimp.sh](examples/zrappimp.sh) för Linux,
+macOs eller annat Un*x-likt OS.
 
-Skapa filen `zrappimp.cmd` med följande innehåll och spara filen på samma ställe
-som ecbokio.exe
-
-```bat
-set EASYCASHIER_USERNAME=xxx
-set EASYCASHIER_PASSWORD=xxx
-set EASYCASHIER_COMPANY=orgnr
-set BOKIO_API_TOKEN=xxx
-ecbokio
-```
-
-Ersätt `xxx` i filen med respektive värde för ditt företag.
-
-Dubbelklicka på filen för att köra importer.
-
-#### Exempel på Linux, macOs eller annat Un*x-likt OS
-
-Skapa filen `zrappimp.sh` med följande innehåll:
-
-```shell
-export EASYCASHIER_USERNAME=xxx
-export EASYCASHIER_PASSWORD=xxx
-export EASYCASHIER_COMPANY=orgnr
-export BOKIO_API_TOKEN=xxx
-ecbokio
-```
-
-Ersätt `xxx` i filen med respektive värde för ditt företag.
-
-Gör filen exekverbar och endast åtkomlig för dig själv: `chmod 0700 zrappimp.sh`.
-
-Kör scriptet för att importera: `./zrappimp.sh`
+Fyll i uppgifterna för ditt företag och konto.

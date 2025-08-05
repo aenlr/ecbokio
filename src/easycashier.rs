@@ -18,6 +18,7 @@ pub struct EasyCashier {
 }
 
 #[derive(Deserialize)]
+#[allow(unused)]
 pub struct EasyCashierMetaInformation {
     #[serde(rename = "currentPage")]
     pub current_page: u32,
@@ -117,11 +118,11 @@ impl EasyCashier {
             .expect("No accessToken in login response");
         let default_company = res
             .get("preferredCorporateIdentity")
-            .and_then(|v| v.as_str().map(|v| v.to_string()));
+            .map(|v| v.as_str().unwrap().to_string());
         let company = Some(orgnummer.to_string())
             .filter(|s| !s.is_empty())
             .or(default_company)
-            .expect("No default company in EasyCashier");
+            .unwrap_or("".to_string());
         Ok(EasyCashier {
             company,
             base_url: base_url.into(),

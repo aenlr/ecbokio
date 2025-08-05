@@ -21,6 +21,7 @@ pub struct JournalEntryAccount {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(unused)]
 pub struct JournalEntry {
     pub id: String,
     pub title: String,
@@ -35,6 +36,7 @@ pub struct JournalEntry {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(unused)]
 pub struct JournalEntryListing {
     #[serde(rename = "totalItems")]
     pub total_items: u32,
@@ -62,6 +64,7 @@ pub struct CreateJournal {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(unused)]
 pub struct UploadResponse {
     pub id: String,
     pub description: String,

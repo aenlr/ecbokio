@@ -1,12 +1,12 @@
-use crate::bokio::{Bokio, CreateJournal, CreateJournalAccount, JournalEntry, BOKIO_API_URL};
-use crate::easycashier::{DateRequest, EasyCashier, ZRapport, EASYCASHIER_URL};
-use chrono::naive::NaiveDate;
+use crate::bokio::{BOKIO_API_URL, Bokio, CreateJournal, CreateJournalAccount, JournalEntry};
+use crate::easycashier::{DateRequest, EASYCASHIER_URL, EasyCashier, ZRapport};
 use chrono::Days;
+use chrono::naive::NaiveDate;
 use rust_decimal::Decimal;
-use std::io::{IsTerminal, Write};
-use std::str::FromStr;
+use std::io::{Write};
 use ureq::Error;
-use utils::PageReq;
+use utils::{PageReq, read_password_trim, read_prompt_trim, to_date, format_local_date};
+use crate::utils::format_orgnr;
 
 mod bokio;
 mod easycashier;
@@ -42,14 +42,6 @@ fn check_arg(name: &str, arg: &str, iter: &mut impl Iterator<Item = String>) -> 
     None
 }
 
-fn check_args(
-    names: &[&str],
-    arg: &str,
-    iter: &mut impl Iterator<Item = String>,
-) -> Option<String> {
-    names.iter().find_map(|name| check_arg(name, arg, iter))
-}
-
 struct RapportImport {
     rapport: ZRapport,
     verifikat: Option<JournalEntry>,
@@ -63,8 +55,7 @@ fn hamta_rapporter(
     let mut page = PageReq { page: 1, size: 100 };
     let date_req = DateRequest::new(&args.start_date, &args.end_date);
     let bokio_start_date = date_req.start_date.checked_sub_days(Days::new(14));
-    let journal = bokio
-        .list_journal(bokio_start_date, Some(date_req.end_date))?;
+    let journal = bokio.list_journal(bokio_start_date, Some(date_req.end_date))?;
     let mut importer: Vec<RapportImport> = Vec::new();
     loop {
         let rapporter = easy.zrapporter(&date_req, &page)?;
@@ -98,7 +89,7 @@ fn rakna_importerade_rapporter(importer: &Vec<RapportImport>) -> usize {
 
 fn lista_rapporter(importer: &Vec<RapportImport>) {
     println!(
-        "| ✅ |   NR | DATUM      | {:<39} |     KORT |  KONTANT |   SWISH | VERNR |",
+        "| ✓ |   NR | DATUM      | {:<39} |     KORT |  KONTANT |   SWISH | VERNR |",
         "TITEL"
     );
     println!(
@@ -116,7 +107,7 @@ fn lista_rapporter(importer: &Vec<RapportImport>) {
         let vernr = verifikat
             .clone()
             .map_or("".to_string(), |j| j.journal_entry_number);
-        let marker = if e.verifikat.is_some() { "✅" } else { " " };
+        let marker = if e.verifikat.is_some() { "✓" } else { " " };
         println!(
             "| {} | {:4} | {} | {:<39} | {:8.2} | {:8.2} | {:7.2} | {:<5} |",
             marker, rapport.sequence_number, datum, title, kort, kontant, swish, vernr
@@ -217,7 +208,7 @@ fn importera_rapport(
     import: &RapportImport,
 ) -> Result<JournalEntry, String> {
     println!(
-        "Importerar Z-Rapport {} ...",
+        "Importerar Z-Rapport {}...",
         import.rapport.sequence_number
     );
 
@@ -239,7 +230,7 @@ fn importera_rapport(
 
     let journal_entry = create_journal_entry(&import.rapport);
     let json_filename = pdf_filename.replace(".pdf", "_bokio.json");
-    print!(" {}...", json_filename);
+    print!(" {}", json_filename);
     std::io::stdout().flush().ok();
     let json = serde_json::to_vec_pretty(&journal_entry).unwrap();
     std::fs::write(&json_filename, json).expect("Kunde inte spara JSON.");
@@ -255,17 +246,15 @@ fn importera_rapport(
     })?;
     println!("{}", journal_entry.journal_entry_number);
 
-    println!("* Laddar upp underlag");
+    print!("* Laddar upp underlag... ");
+    std::io::stdout().flush().ok();
     bokio
         .upload(&pdf_filename, "application/pdf", &journal_entry.id)
-        .inspect_err(|e| {
-            eprintln!(
-                "Kunde inte ladda upp PDF för Z-Rapport {} till verifikat {}: {}",
-                import.rapport.sequence_number, journal_entry.journal_entry_number, e
-            )
-        })
+        .inspect_err(|e| eprintln!("Misslyckades: {}", e))
+        .inspect(|_| println!("OK"))
         .ok();
 
+    println!();
     Ok(journal_entry)
 }
 
@@ -282,6 +271,7 @@ fn importera(easy: &EasyCashier, bokio: &Bokio, rapporter: &mut Vec<RapportImpor
                 .iter_mut()
                 .find(|e| e.rapport.sequence_number == seqnr)
                 .unwrap();
+            println!();
             match importera_rapport(&easy, &bokio, imp) {
                 Ok(journal_entry) => {
                     imp.verifikat.replace(journal_entry);
@@ -295,87 +285,41 @@ fn importera(easy: &EasyCashier, bokio: &Bokio, rapporter: &mut Vec<RapportImpor
     }
 }
 
-fn read_prompt(prompt: &str) -> std::io::Result<String> {
-    print!("{}", prompt);
-    std::io::stdout().flush().and_then(|_| {
-        let mut val = String::new();
-        match std::io::stdin().read_line(&mut val) {
-            Ok(_) => Ok(val.trim().to_string()),
-            Err(e) => Err(e),
-        }
-    })
-}
-
-fn read_prompt_trim(prompt: &str) -> String {
-    read_prompt(prompt).unwrap().trim().to_string()
-}
-
-fn read_password(prompt: &str) -> std::io::Result<String> {
-    // IntelliJ console is broken giving "device not ready" for /dev/tty.
-    // Strangely the builtin terminal works fine.
-    if std::io::stdin().is_terminal() && !std::env::var("BROKEN_TERMINAL").is_ok() {
-        rpassword::prompt_password(prompt)
-    } else {
-        read_prompt(prompt)
-    }
-}
-
-fn read_password_trim(prompt: &str) -> String {
-    read_password(prompt).unwrap().trim().to_string()
-}
-
 fn main() {
     let mut args = Cli {
-        orgnummer: std::env::var("EASYCASHIER_COMPANY").unwrap_or("".to_string()),
+        orgnummer: utils::get_env("EASYCASHIER_COMPANY"),
         start_date: None,
         end_date: None,
-        easycashier_url: std::env::var("EASYCASHIER_URL").unwrap_or(EASYCASHIER_URL.to_string()),
-        easycashier_username: std::env::var("EASYCASHIER_USERNAME").unwrap_or("".to_string()),
-        easycashier_password: std::env::var("EASYCASHIER_PASSWORD").unwrap_or("".to_string()),
-        bokio_api_url: std::env::var("BOKIO_API_URL").unwrap_or(BOKIO_API_URL.to_string()),
-        bokio_api_token: std::env::var("BOKIO_API_TOKEN").unwrap_or("".to_string()),
-        bokio_company_id: std::env::var("BOKIO_COMPANY_ID").unwrap_or("".to_string()),
+        easycashier_url: utils::get_env_or_default("EASYCASHIER_URL", EASYCASHIER_URL),
+        easycashier_username: utils::get_env("EASYCASHIER_USERNAME"),
+        easycashier_password: utils::get_env("EASYCASHIER_PASSWORD"),
+        bokio_api_url: utils::get_env_or_default("BOKIO_API_URL", BOKIO_API_URL),
+        bokio_api_token: utils::get_env("BOKIO_API_TOKEN"),
+        bokio_company_id: utils::get_env("BOKIO_COMPANY_ID"),
     };
 
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
-        if let Some(url) = check_args(&["easycashier-url", "easy-url"], &arg, &mut iter) {
+        if let Some(url) = check_arg("easycashier-url", &arg, &mut iter) {
             args.easycashier_url = url;
-        } else if let Some(username) =
-            check_args(&["easycashier-username", "easy-username"], &arg, &mut iter)
-        {
+        } else if let Some(username) = check_arg("easycashier-username", &arg, &mut iter) {
             args.easycashier_username = username;
-        } else if let Some(password) =
-            check_args(&["easycashier-password", "easy-password"], &arg, &mut iter)
-        {
+        } else if let Some(password) = check_arg("easycashier-password", &arg, &mut iter) {
             args.easycashier_password = password;
-        } else if let Some(orgnummer) = check_args(
-            &["orgnummer", "easycashier-company", "easy-company"],
-            &arg,
-            &mut iter,
-        ) {
+        } else if let Some(orgnummer) = check_arg("orgnummer", &arg, &mut iter) {
             args.orgnummer = orgnummer;
-        } else if let Some(start) = check_arg("date", &arg, &mut iter)
-            .map(|v| NaiveDate::from_str(&v).unwrap())
-        {
+        } else if let Some(start) = check_arg("date", &arg, &mut iter).map(to_date) {
             args.start_date = Some(start);
             args.end_date = Some(start);
-        } else if let Some(start) = check_args(&["start-date", "start"], &arg, &mut iter)
-            .map(|v| NaiveDate::from_str(&v).unwrap())
-        {
+        } else if let Some(start) = check_arg("start", &arg, &mut iter).map(to_date) {
             args.start_date = Some(start);
-        } else if let Some(end) = check_args(&["end-date", "end"], &arg, &mut iter)
-            .map(|v| NaiveDate::from_str(&v).unwrap())
-        {
+        } else if let Some(end) = check_arg("end", &arg, &mut iter).map(to_date) {
             args.end_date = Some(end);
-        } else if let Some(url) = check_args(&["bokio-api-url", "bokio-url"], &arg, &mut iter) {
+        } else if let Some(url) = check_arg("bokio-api-url", &arg, &mut iter) {
             args.bokio_api_url = url;
-        } else if let Some(token) = check_args(&["bokio-api-token", "bokio-token"], &arg, &mut iter)
-        {
+        } else if let Some(token) = check_arg("bokio-api-token", &arg, &mut iter) {
             args.bokio_api_token = token;
-        } else if let Some(company_id) =
-            check_args(&["bokio-company-id", "bokio-company"], &arg, &mut iter)
-        {
+        } else if let Some(company_id) = check_arg("bokio-company-id", &arg, &mut iter) {
             args.bokio_company_id = company_id;
         } else {
             eprintln!("{}: invalid option", arg);
@@ -384,12 +328,7 @@ fn main() {
     }
 
     if !args.orgnummer.is_empty() {
-        let mut orgnr = args.orgnummer.trim().to_string();
-        let len = orgnr.len();
-        if orgnr.chars().all(|c| c.is_ascii_digit()) && [10, 12].contains(&len) {
-            orgnr = format!("{}-{}", &orgnr[0..len - 4], &orgnr[len - 4..len]);
-        }
-        args.orgnummer = orgnr;
+        args.orgnummer = format_orgnr(&args.orgnummer);
     }
 
     if args.easycashier_username.is_empty() {
@@ -430,12 +369,20 @@ fn main() {
         &args.easycashier_password,
         &args.orgnummer,
     );
-    let easy = easy
+    let mut easy = easy
         .inspect_err(|err| {
             eprintln!("EasyCashier: inloggning misslyckades: {}", err);
             std::process::exit(1);
         })
         .unwrap();
+
+    if easy.company.is_empty() {
+        let orgnr = read_prompt_trim("EasyCashier company: ");
+        if orgnr.is_empty() {
+            return
+        }
+        easy.company = format_orgnr(&orgnr);
+    }
 
     let bokio = Bokio::new(
         &args.bokio_api_url,
@@ -454,8 +401,8 @@ fn main() {
         "{} Z-Rapporter för {} ({} - {})",
         rapporter.len(),
         easy.company,
-        utils::format_local_date(&dates.start_date),
-        utils::format_local_date(&dates.end_date),
+        format_local_date(&dates.start_date),
+        format_local_date(&dates.end_date),
     );
 
     if !rapporter.is_empty() {

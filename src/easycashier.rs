@@ -100,7 +100,7 @@ impl EasyCashier {
         base_url: &str,
         username: &str,
         password: &str,
-        orgnummer: &Option<String>,
+        orgnummer: &str,
     ) -> Result<EasyCashier, Error> {
         let url = format!("{}/v1/login", base_url);
         let mut body = std::collections::HashMap::new();
@@ -118,14 +118,14 @@ impl EasyCashier {
         let default_company = res
             .get("preferredCorporateIdentity")
             .and_then(|v| v.as_str().map(|v| v.to_string()));
-        let company = orgnummer
-            .clone()
+        let company = Some(orgnummer.to_string())
+            .filter(|s| !s.is_empty())
             .or(default_company)
             .expect("No default company in EasyCashier");
         Ok(EasyCashier {
             company,
-            base_url: base_url.to_string(),
-            token: token.to_string(),
+            base_url: base_url.into(),
+            token: token.into(),
         })
     }
 

@@ -1,0 +1,8 @@
+@echo off
+REM Ersätt med dina uppgifter
+set EASYCASHIER_USERNAME=
+set EASYCASHIER_PASSWORD=
+REM set EASYCASHIER_COMPANY=
+set BOKIO_API_TOKEN=
+set BOKIO_COMPANY_ID=
+ecbokio %*

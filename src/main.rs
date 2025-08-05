@@ -1,9 +1,9 @@
-use crate::bokio::{BOKIO_API_URL, Bokio, CreateJournal, CreateJournalAccount, JournalEntry};
-use crate::easycashier::{DateRequest, EASYCASHIER_URL, EasyCashier, ZRapport};
-use chrono::Days;
+use crate::bokio::{Bokio, CreateJournal, CreateJournalAccount, JournalEntry, BOKIO_API_URL};
+use crate::easycashier::{DateRequest, EasyCashier, ZRapport, EASYCASHIER_URL};
 use chrono::naive::NaiveDate;
+use chrono::Days;
 use rust_decimal::Decimal;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::str::FromStr;
 use ureq::Error;
 use utils::PageReq;
@@ -13,13 +13,13 @@ mod easycashier;
 mod utils;
 
 struct Cli {
-    orgnummer: Option<String>,
+    orgnummer: String,
     easycashier_url: String,
-    easycashier_username: Option<String>,
-    easycashier_password: Option<String>,
+    easycashier_username: String,
+    easycashier_password: String,
     bokio_api_url: String,
-    bokio_api_token: Option<String>,
-    bokio_company_id: Option<String>,
+    bokio_api_token: String,
+    bokio_company_id: String,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
 }
@@ -64,8 +64,7 @@ fn hamta_rapporter(
     let date_req = DateRequest::new(&args.start_date, &args.end_date);
     let bokio_start_date = date_req.start_date.checked_sub_days(Days::new(14));
     let journal = bokio
-        .list_journal(bokio_start_date, Some(date_req.end_date))
-        .unwrap();
+        .list_journal(bokio_start_date, Some(date_req.end_date))?;
     let mut importer: Vec<RapportImport> = Vec::new();
     loop {
         let rapporter = easy.zrapporter(&date_req, &page)?;
@@ -98,8 +97,14 @@ fn rakna_importerade_rapporter(importer: &Vec<RapportImport>) -> usize {
 }
 
 fn lista_rapporter(importer: &Vec<RapportImport>) {
-    println!("| ✅ |   NR | DATUM      | {:<39} |     KORT |  KONTANT |   SWISH | VERNR |", "TITEL");
-    println!("|---|------|------------|-{:-<39}-|----------|----------|---------|-------|", "-");
+    println!(
+        "| ✅ |   NR | DATUM      | {:<39} |     KORT |  KONTANT |   SWISH | VERNR |",
+        "TITEL"
+    );
+    println!(
+        "|---|------|------------|-{:-<39}-|----------|----------|---------|-------|",
+        "-"
+    );
     for e in importer {
         let rapport = &e.rapport;
         let verifikat = &e.verifikat;
@@ -290,17 +295,46 @@ fn importera(easy: &EasyCashier, bokio: &Bokio, rapporter: &mut Vec<RapportImpor
     }
 }
 
+fn read_prompt(prompt: &str) -> std::io::Result<String> {
+    print!("{}", prompt);
+    std::io::stdout().flush().and_then(|_| {
+        let mut val = String::new();
+        match std::io::stdin().read_line(&mut val) {
+            Ok(_) => Ok(val.trim().to_string()),
+            Err(e) => Err(e),
+        }
+    })
+}
+
+fn read_prompt_trim(prompt: &str) -> String {
+    read_prompt(prompt).unwrap().trim().to_string()
+}
+
+fn read_password(prompt: &str) -> std::io::Result<String> {
+    // IntelliJ console is broken giving "device not ready" for /dev/tty.
+    // Strangely the builtin terminal works fine.
+    if std::io::stdin().is_terminal() && !std::env::var("BROKEN_TERMINAL").is_ok() {
+        rpassword::prompt_password(prompt)
+    } else {
+        read_prompt(prompt)
+    }
+}
+
+fn read_password_trim(prompt: &str) -> String {
+    read_password(prompt).unwrap().trim().to_string()
+}
+
 fn main() {
     let mut args = Cli {
-        orgnummer: std::env::var("EASYCASHIER_COMPANY").ok(),
+        orgnummer: std::env::var("EASYCASHIER_COMPANY").unwrap_or("".to_string()),
         start_date: None,
         end_date: None,
         easycashier_url: std::env::var("EASYCASHIER_URL").unwrap_or(EASYCASHIER_URL.to_string()),
-        easycashier_username: std::env::var("EASYCASHIER_USERNAME").ok(),
-        easycashier_password: std::env::var("EASYCASHIER_PASSWORD").ok(),
+        easycashier_username: std::env::var("EASYCASHIER_USERNAME").unwrap_or("".to_string()),
+        easycashier_password: std::env::var("EASYCASHIER_PASSWORD").unwrap_or("".to_string()),
         bokio_api_url: std::env::var("BOKIO_API_URL").unwrap_or(BOKIO_API_URL.to_string()),
-        bokio_api_token: std::env::var("BOKIO_API_TOKEN").ok(),
-        bokio_company_id: std::env::var("BOKIO_COMPANY_ID").ok(),
+        bokio_api_token: std::env::var("BOKIO_API_TOKEN").unwrap_or("".to_string()),
+        bokio_company_id: std::env::var("BOKIO_COMPANY_ID").unwrap_or("".to_string()),
     };
 
     let mut iter = std::env::args().skip(1);
@@ -310,17 +344,22 @@ fn main() {
         } else if let Some(username) =
             check_args(&["easycashier-username", "easy-username"], &arg, &mut iter)
         {
-            args.easycashier_username = Some(username);
+            args.easycashier_username = username;
         } else if let Some(password) =
             check_args(&["easycashier-password", "easy-password"], &arg, &mut iter)
         {
-            args.easycashier_password = Some(password);
+            args.easycashier_password = password;
         } else if let Some(orgnummer) = check_args(
             &["orgnummer", "easycashier-company", "easy-company"],
             &arg,
             &mut iter,
         ) {
-            args.orgnummer = Some(orgnummer);
+            args.orgnummer = orgnummer;
+        } else if let Some(start) = check_arg("date", &arg, &mut iter)
+            .map(|v| NaiveDate::from_str(&v).unwrap())
+        {
+            args.start_date = Some(start);
+            args.end_date = Some(start);
         } else if let Some(start) = check_args(&["start-date", "start"], &arg, &mut iter)
             .map(|v| NaiveDate::from_str(&v).unwrap())
         {
@@ -333,54 +372,80 @@ fn main() {
             args.bokio_api_url = url;
         } else if let Some(token) = check_args(&["bokio-api-token", "bokio-token"], &arg, &mut iter)
         {
-            args.bokio_api_token = Some(token);
+            args.bokio_api_token = token;
         } else if let Some(company_id) =
             check_args(&["bokio-company-id", "bokio-company"], &arg, &mut iter)
         {
-            args.bokio_company_id = Some(company_id);
+            args.bokio_company_id = company_id;
         } else {
             eprintln!("{}: invalid option", arg);
             std::process::exit(1);
         }
     }
 
-    if args.easycashier_username.is_none() || args.easycashier_password.is_none() {
-        eprintln!("EasyCashier username and password are required");
-        std::process::exit(1);
+    if !args.orgnummer.is_empty() {
+        let mut orgnr = args.orgnummer.trim().to_string();
+        let len = orgnr.len();
+        if orgnr.chars().all(|c| c.is_ascii_digit()) && [10, 12].contains(&len) {
+            orgnr = format!("{}-{}", &orgnr[0..len - 4], &orgnr[len - 4..len]);
+        }
+        args.orgnummer = orgnr;
     }
 
-    if args.bokio_api_token.is_none() {
-        eprintln!("Bokio API token is required");
-        std::process::exit(1);
+    if args.easycashier_username.is_empty() {
+        let username = read_prompt_trim("EasyCashier username: ");
+        if username.is_empty() {
+            return;
+        }
+        args.easycashier_username = username;
     }
 
-    if args.bokio_company_id.is_none() {
-        eprintln!("Bokio company id is required");
-        std::process::exit(1);
+    if args.easycashier_password.is_empty() {
+        let password = read_password_trim("EasyCashier password: ");
+        if password.is_empty() {
+            return;
+        }
+        args.easycashier_password = password;
+    }
+
+    if args.bokio_api_token.is_empty() {
+        let token = read_password_trim("Bokio API token: ");
+        if token.is_empty() {
+            return;
+        }
+        args.bokio_api_token = token;
+    }
+
+    if args.bokio_company_id.is_empty() {
+        let company_id = read_prompt_trim("Bokio company id: ");
+        if company_id.is_empty() {
+            return;
+        }
+        args.bokio_company_id = company_id;
     }
 
     let easy = EasyCashier::login(
         &args.easycashier_url,
-        &args.easycashier_username.clone().unwrap(),
-        &args.easycashier_password.clone().unwrap(),
+        &args.easycashier_username,
+        &args.easycashier_password,
         &args.orgnummer,
     );
     let easy = easy
         .inspect_err(|err| {
-            eprintln!("EasyCashier login failed: {}", err);
+            eprintln!("EasyCashier: inloggning misslyckades: {}", err);
             std::process::exit(1);
         })
         .unwrap();
 
     let bokio = Bokio::new(
         &args.bokio_api_url,
-        &args.bokio_company_id.clone().unwrap(),
-        &args.bokio_api_token.clone().unwrap(),
+        &args.bokio_company_id,
+        &args.bokio_api_token,
     );
 
     let (mut rapporter, dates) = hamta_rapporter(&args, &easy, &bokio)
         .inspect_err(|err| {
-            eprintln!("EasyCashier login failed: {}", err);
+            eprintln!("Kunde inte hämta Z-Rapporter: {}", err);
             std::process::exit(1);
         })
         .unwrap();
